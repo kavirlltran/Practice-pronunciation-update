@@ -81,7 +81,7 @@
       margin: 20px 0;
       text-align: center;
     }
-    /* Các nút được thiết kế đồng nhất */
+    /* Nút điều khiển được thiết kế đồng nhất */
     .control-btn {
       padding: 12px 24px;
       font-size: 1.1em;
@@ -103,6 +103,7 @@
     /* Khi nút đang hoạt động, chuyển sang màu vàng */
     .active {
       background-color: yellow !important;
+      color: #000 !important;
     }
     /* Biểu tượng âm thanh nhấp nháy khi ghi âm */
     #recordIcon {
@@ -156,8 +157,9 @@
   <div class="container">
     <h1>Evaluate pronunciation</h1>
     <p>
-      Select one of the sentences below, then press the "Record" button to start recording.
-      When you finish reading, press the "Stop" button to end recording, then press "Check" to evaluate.
+      Select one of the sentences below, then press the button to toggle recording.
+      When you finish reading, press the button (now showing "Stop") to end recording,
+      then press "Check" to evaluate.
       The system will compare your voice with the original text.
       Mispronounced words will be highlighted in red while content words remain in green.
     </p>
@@ -165,8 +167,9 @@
     <div id="sentences"></div>
     
     <div id="controls">
-      <button id="recordBtn" class="control-btn">Record</button>
-      <button id="stopBtn" class="control-btn" disabled>Stop</button>
+      <!-- Nút toggle để bắt đầu / dừng ghi âm -->
+      <button id="toggleBtn" class="control-btn">Record</button>
+      <!-- Nút kiểm tra transcript -->
       <button id="checkBtn" class="control-btn" disabled>Check</button>
       <span id="recordIcon" class="hidden"></span>
       <p id="status"></p>
@@ -178,7 +181,7 @@
   <script>
     // Yêu cầu truy cập microphone ngay khi load trang
     function requestMicAccess() {
-      if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         navigator.mediaDevices.getUserMedia({ audio: true })
           .then(function(stream) {
             console.log("Microphone access granted.");
@@ -187,8 +190,7 @@
           .catch(function(err) {
             console.log("Microphone access denied: " + err);
             alert("Microphone access denied. Recording functionality will be disabled.");
-            recordBtn.disabled = true;
-            stopBtn.disabled = true;
+            toggleBtn.disabled = true;
             checkBtn.disabled = true;
           });
       }
@@ -214,12 +216,10 @@
     
     let selectedSentenceIndex = null;
     let isRecording = false;
-    let manualStop = false; // Cờ để đánh dấu dừng ghi âm thủ công
     let finalTranscript = ""; // Lưu lại toàn bộ transcript
     
     const sentencesDiv = document.getElementById("sentences");
-    const recordBtn = document.getElementById("recordBtn");
-    const stopBtn = document.getElementById("stopBtn");
+    const toggleBtn = document.getElementById("toggleBtn");
     const checkBtn = document.getElementById("checkBtn");
     const recordIcon = document.getElementById("recordIcon");
     const statusEl = document.getElementById("status");
@@ -237,6 +237,7 @@
           renderSentences();
         });
     
+        // Tách câu thành các từ và áp dụng lớp stressed nếu từ nằm trong mapping của câu đó
         sentence.split(" ").forEach((word) => {
           const span = document.createElement("span");
           span.classList.add("word");
@@ -251,10 +252,11 @@
       });
     }
     
-    // Reset transcript, status và loại bỏ các lớp lỗi
+    // Reset transcript, status và loại bỏ lớp lỗi khỏi các từ
     function resetDisplay() {
       transcriptEl.textContent = "";
       statusEl.textContent = "";
+      finalTranscript = "";
       const sentenceDivs = document.querySelectorAll(".sentence");
       sentenceDivs.forEach((div) => {
         const spans = div.querySelectorAll("span.word");
@@ -313,7 +315,7 @@
       }
     }
     
-    // Phát gợi ý âm thanh cho các từ sai
+    // Phát gợi ý âm thanh cho các từ sai và tắt nếu microphone ngắt
     function provideAudioGuidance(errorWords) {
       const synth = window.speechSynthesis;
       const msgText = "Please listen and repeat the following words correctly: " + errorWords.join(", ");
@@ -322,91 +324,79 @@
       synth.speak(utterThis);
     }
     
+    // Sử dụng SpeechRecognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert("Your browser does not support Speech Recognition. Please use Chrome or Edge.");
-      recordBtn.disabled = true;
-      stopBtn.disabled = true;
+      toggleBtn.disabled = true;
       checkBtn.disabled = true;
     } else {
       const recognition = new SpeechRecognition();
-      recognition.continuous = true; // Ghi âm liên tục cho đến khi người dùng nhấn Stop
+      // Sử dụng continuous để giữ trạng thái ghi âm (nhưng không tự restart)
+      recognition.continuous = true;
       recognition.interimResults = false;
       recognition.lang = "en-US";
     
       recognition.onstart = function () {
         isRecording = true;
-        manualStop = false;
         statusEl.textContent = "Recording... Please read the selected sentence.";
         recordIcon.classList.remove("hidden");
-        recordBtn.disabled = true;
-        stopBtn.disabled = false;
+        // Cập nhật giao diện nút: chuyển sang "Stop" và màu vàng
+        toggleBtn.textContent = "Stop";
+        toggleBtn.classList.add("active");
+        // Vô hiệu hóa nút Check khi đang ghi âm
         checkBtn.disabled = true;
-        // Chuyển nút hoạt động sang màu vàng
-        recordBtn.classList.add("active");
-        stopBtn.classList.add("active");
       };
     
-      // Tích lũy transcript khi có kết quả
+      // Khi có kết quả, tích lũy transcript
       recognition.onresult = function (event) {
         for (let i = event.resultIndex; i < event.results.length; i++) {
           finalTranscript += event.results[i][0].transcript + " ";
         }
       };
     
+      // Khi ghi âm kết thúc (chỉ dừng khi người dùng nhấn nút)
       recognition.onend = function () {
-        if (!manualStop) {
-          // Nếu ghi âm kết thúc do khoảng lặng, tự restart cho đến khi người dùng nhấn Stop
-          recognition.start();
-        } else {
-          isRecording = false;
-          recordBtn.disabled = false;
-          stopBtn.disabled = true;
-          recordIcon.classList.add("hidden");
-          // Đặt lại màu nút về mặc định
-          recordBtn.classList.remove("active");
-          stopBtn.classList.remove("active");
-          statusEl.textContent = "Recording stopped. Press 'Check' to evaluate.";
-          checkBtn.disabled = false;
-        }
+        isRecording = false;
+        recordIcon.classList.add("hidden");
+        // Cập nhật lại nút về trạng thái "Record"
+        toggleBtn.textContent = "Record";
+        toggleBtn.classList.remove("active");
+        statusEl.textContent = "Recording stopped. Press 'Check' to evaluate.";
+        // Kích hoạt nút Check để đánh giá transcript
+        checkBtn.disabled = false;
       };
     
       recognition.onerror = function (event) {
         statusEl.textContent = "Error occurred during recording: " + event.error;
-        // Tắt âm thanh (cancel speech synthesis) khi microphone bị ngắt
+        // Tắt bất kỳ âm thanh nào đang phát
         window.speechSynthesis.cancel();
         isRecording = false;
-        recordBtn.disabled = false;
-        stopBtn.disabled = true;
-        checkBtn.disabled = false;
         recordIcon.classList.add("hidden");
-        recordBtn.classList.remove("active");
-        stopBtn.classList.remove("active");
+        toggleBtn.textContent = "Record";
+        toggleBtn.classList.remove("active");
+        checkBtn.disabled = false;
       };
     
-      // Khi nhấn nút Record, bắt đầu ghi âm
-      recordBtn.addEventListener("click", function () {
+      // Nút toggle (Record/Stop) xử lý chuyển đổi trạng thái
+      toggleBtn.addEventListener("click", function () {
         if (selectedSentenceIndex === null) {
           alert("Please select a sentence before recording!");
           return;
         }
-        resetDisplay();
-        manualStop = false;
-        finalTranscript = "";
-        recognition.start();
-      });
-    
-      // Khi nhấn nút Stop, dừng ghi âm thủ công
-      stopBtn.addEventListener("click", function () {
-        if (isRecording) {
-          manualStop = true;
+        if (!isRecording) {
+          // Reset transcript khi bắt đầu ghi âm mới
+          resetDisplay();
+          recognition.start();
+        } else {
           recognition.stop();
         }
       });
     
-      // Khi nhấn nút Check, đánh giá transcript đã ghi âm
+      // Nút Check đánh giá transcript
       checkBtn.addEventListener("click", function () {
         evaluateTranscript(finalTranscript);
+        // Sau khi đánh giá, vô hiệu hóa nút Check để tránh đánh giá lại nhiều lần
         checkBtn.disabled = true;
       });
     }
